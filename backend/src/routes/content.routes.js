@@ -21,6 +21,87 @@ function clampAnswer(answer, maxWords = 220) {
   return `${words.slice(0, maxWords).join(' ')} ...`;
 }
 
+function buildLocalSyllabusAnalysis(rawText = '', subject = 'General', level = 'college') {
+  const lines = String(rawText)
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[-*+•]\s*/, '').trim())
+    .filter(Boolean);
+
+  const uniqueLines = [];
+  const seen = new Set();
+  for (const line of lines) {
+    const key = line.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueLines.push(line);
+    if (uniqueLines.length >= 80) break;
+  }
+
+  const headings = uniqueLines.filter((line) => /chapter|unit|module|topic|week|day|lesson|part/i.test(line));
+  const topics = (headings.length ? headings : uniqueLines)
+    .slice(0, 24)
+    .map((line) => line.replace(/^\d+[\).:-]\s*/, '').trim());
+
+  const fallbackTopic = `Core ${subject} concepts`;
+  const normalizedTopics = topics.length ? topics : [fallbackTopic, `Problem solving in ${subject}`, `${subject} revision practice`];
+
+  const snapshot = normalizedTopics.slice(0, 5);
+  const highPriority = normalizedTopics.slice(0, 4);
+  const mediumPriority = normalizedTopics.slice(4, 8);
+  const lowPriority = normalizedTopics.slice(8, 12);
+
+  const week1 = highPriority.slice(0, 2);
+  const week2 = [...highPriority.slice(2), ...mediumPriority.slice(0, 1)];
+  const week3 = mediumPriority.slice(1, 4);
+  const week4 = [...lowPriority.slice(0, 2), 'Mock test + error log review'];
+
+  const flow = [
+    `Monday: Learn ${highPriority[0] || fallbackTopic}`,
+    `Tuesday: Practice questions from ${highPriority[1] || fallbackTopic}`,
+    `Wednesday: Revise weak points and summary notes`,
+    `Thursday: Cover ${mediumPriority[0] || fallbackTopic} with examples`,
+    `Friday: Timed quiz and doubt clearance`,
+    `Saturday: Past papers / applied problems`,
+    `Sunday: Weekly recap + next-week plan`,
+  ];
+
+  const revision = [
+    'Use active recall and spaced repetition for every chapter.',
+    'Maintain an error log after each quiz or mock test.',
+    'Do one timed test at the end of every week.',
+    'Final week: 2 full mocks + rapid formula/fact revision.',
+  ];
+
+  const formatList = (items) => (items.length ? items : ['No major topics found in file.'])
+    .map((item) => `- ${item}`)
+    .join('\n');
+
+  return [
+    `1) Syllabus Snapshot (${subject} - ${level})`,
+    formatList(snapshot),
+    '',
+    '2) Priority Buckets (High/Medium/Low with reasons)',
+    'High Priority:',
+    formatList(highPriority.map((item) => `${item} (high exam weight / foundational)`)),
+    'Medium Priority:',
+    formatList(mediumPriority.map((item) => `${item} (important for scoring consistency)`)),
+    'Low Priority:',
+    formatList(lowPriority.map((item) => `${item} (quick coverage after core topics)`)),
+    '',
+    '3) 4-Week Roadmap (Week-wise focus)',
+    `Week 1: ${week1.join(' | ') || fallbackTopic}`,
+    `Week 2: ${week2.join(' | ') || fallbackTopic}`,
+    `Week 3: ${week3.join(' | ') || fallbackTopic}`,
+    `Week 4: ${week4.join(' | ') || fallbackTopic}`,
+    '',
+    '4) Daily Study Flowchart (Mon-Sun tasks)',
+    formatList(flow),
+    '',
+    '5) Revision + Test Strategy',
+    formatList(revision),
+  ].join('\n');
+}
+
 function normalizeWebResults(results = []) {
   return results
     .filter((item) => item && item.title && item.link)
@@ -726,10 +807,6 @@ router.post('/ai/syllabus-analyze', syllabusUpload.single('file'), async (req, r
   const apiKey = String(process.env.GROK_API_KEY || '').trim();
   const configuredModel = String(process.env.GROK_MODEL || '').trim();
 
-  if (!apiKey) {
-    return res.status(500).json({ message: 'GROK_API_KEY is not configured in backend environment.' });
-  }
-
   let extractedText = '';
   try {
     const mimetype = String(req.file.mimetype || '').toLowerCase();
@@ -750,6 +827,19 @@ router.post('/ai/syllabus-analyze', syllabusUpload.single('file'), async (req, r
 
   if (!extractedText) {
     return res.status(400).json({ message: 'No readable text found in syllabus file.' });
+  }
+
+  if (!apiKey) {
+    const answer = buildLocalSyllabusAnalysis(extractedText, subject, level);
+    return res.json({
+      answer,
+      model: 'local-syllabus-fallback-v1',
+      provider: 'local',
+      extractedChars: extractedText.length,
+      fileName: req.file.originalname,
+      fallback: true,
+      warning: 'GROK_API_KEY is not configured, so local fallback analysis was used.',
+    });
   }
 
   const provider = apiKey.startsWith('gsk_') ? 'groq' : 'xai';
@@ -838,10 +928,26 @@ router.post('/ai/syllabus-analyze', syllabusUpload.single('file'), async (req, r
       }
     }
 
-    return res.status(502).json({ message: lastErrorMessage });
+    const answer = buildLocalSyllabusAnalysis(extractedText, subject, level);
+    return res.json({
+      answer,
+      model: 'local-syllabus-fallback-v1',
+      provider: 'local',
+      extractedChars: extractedText.length,
+      fileName: req.file.originalname,
+      fallback: true,
+      warning: lastErrorMessage,
+    });
   } catch (error) {
-    return res.status(502).json({
-      message: error?.message || 'Syllabus analysis failed.',
+    const answer = buildLocalSyllabusAnalysis(extractedText, subject, level);
+    return res.json({
+      answer,
+      model: 'local-syllabus-fallback-v1',
+      provider: 'local',
+      extractedChars: extractedText.length,
+      fileName: req.file.originalname,
+      fallback: true,
+      warning: error?.message || 'Syllabus analysis fallback used after upstream failure.',
     });
   }
 });

@@ -406,3 +406,413 @@ export function downloadPlanAsText(planText, subject = 'Study Plan') {
   }
 }
 
+function normalizeVisualLine(line = '') {
+  return String(line)
+    .replace(/^[-*+•]	?\s*/, '')
+    .replace(/^\d+[\).:-]\s*/, '')
+    .replace(/\*\*/g, '')
+    .trim();
+}
+
+function parseVisualSections(text = '') {
+  const lines = String(text).split(/\r?\n/);
+  const sections = [];
+  let current = null;
+
+  const pushCurrent = () => {
+    if (current && (current.title || current.lines.length)) {
+      sections.push(current);
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = normalizeVisualLine(rawLine);
+    if (!line) continue;
+
+    const headingMatch = line.match(/^([A-Z][A-Za-z0-9\s&-]{3,60})(?:\:)?$/) || line.match(/^\d+[\).:-]\s+(.+)/);
+    if (headingMatch && !/^day\s+\d+/i.test(line) && !/^week\s+\d+/i.test(line)) {
+      pushCurrent();
+      current = { title: normalizeVisualLine(headingMatch[1]), lines: [] };
+      continue;
+    }
+
+    if (!current) {
+      current = { title: 'Overview', lines: [] };
+    }
+
+    current.lines.push(line);
+  }
+
+  pushCurrent();
+  return sections;
+}
+
+function bucketLines(lines = []) {
+  const buckets = {
+    snapshot: [],
+    priorities: { high: [], medium: [], low: [] },
+    roadmap: [],
+    flow: [],
+    revision: [],
+  };
+
+  let activePriority = 'medium';
+
+  lines.forEach((line) => {
+    if (!line) return;
+    if (/high/i.test(line) && /priority|important|must/i.test(line)) {
+      activePriority = 'high';
+      buckets.priorities.high.push(line);
+      return;
+    }
+    if (/medium/i.test(line) && /priority|important|must/i.test(line)) {
+      activePriority = 'medium';
+      buckets.priorities.medium.push(line);
+      return;
+    }
+    if (/low/i.test(line) && /priority|important|must/i.test(line)) {
+      activePriority = 'low';
+      buckets.priorities.low.push(line);
+      return;
+    }
+
+    if (/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b/i.test(line)) {
+      buckets.flow.push(line);
+      return;
+    }
+
+    if (/week\s*\d+|day\s*\d+|module\s*\d+|chapter\s*\d+/i.test(line)) {
+      buckets.roadmap.push(line);
+      return;
+    }
+
+    if (/revise|revision|practice|test|mock|quiz|recap/i.test(line)) {
+      buckets.revision.push(line);
+      return;
+    }
+
+    if (/step|follow|do this|first|then|next|finally|process|flow/i.test(line)) {
+      buckets.flow.push(line);
+      return;
+    }
+
+    if (/overview|summary|snapshot|goal|objective|focus|key|topic|important/i.test(line)) {
+      buckets.snapshot.push(line);
+      return;
+    }
+
+    buckets.priorities[activePriority].push(line);
+  });
+
+  return buckets;
+}
+
+function uniqueNonEmpty(lines = []) {
+  const seen = new Set();
+  const output = [];
+
+  lines.forEach((line) => {
+    const clean = String(line || '').trim();
+    if (!clean) return;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    output.push(clean);
+  });
+
+  return output;
+}
+
+function extractFlowchartStepPool(sections = [], buckets = {}) {
+  const flowSections = sections
+    .filter((section) => /flowchart|daily study flow|study flow|execution flow/i.test(section.title || ''))
+    .flatMap((section) => section.lines || []);
+
+  const roadmapSections = sections
+    .filter((section) => /roadmap|week|plan/i.test(section.title || ''))
+    .flatMap((section) => section.lines || []);
+
+  const weekdayLines = sections
+    .flatMap((section) => section.lines || [])
+    .filter((line) => /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b/i.test(line));
+
+  const directSteps = sections
+    .flatMap((section) => section.lines || [])
+    .filter((line) => /^step\s*\d+|^first\b|^then\b|^next\b|^finally\b/i.test(line));
+
+  const primary = uniqueNonEmpty([
+    ...flowSections,
+    ...weekdayLines,
+    ...directSteps,
+    ...(buckets.flow || []),
+  ]).slice(0, 10);
+
+  const detailPool = uniqueNonEmpty([
+    ...roadmapSections,
+    ...(buckets.roadmap || []),
+    ...(buckets.revision || []),
+    ...(buckets.snapshot || []),
+    ...(buckets.priorities?.high || []),
+    ...(buckets.priorities?.medium || []),
+  ]);
+
+  const fallbackPrimary = uniqueNonEmpty([
+    ...detailPool,
+    ...(buckets.flow || []),
+  ]).slice(0, 10);
+
+  return {
+    steps: primary.length ? primary : fallbackPrimary,
+    details: detailPool,
+  };
+}
+
+export function buildSyllabusVisualModel(answer = '', subject = 'Syllabus') {
+  const sections = parseVisualSections(answer);
+  const joined = sections.flatMap((section) => section.lines);
+  const buckets = bucketLines(joined);
+  const flowPool = extractFlowchartStepPool(sections, buckets);
+
+  const weeks = sections
+    .flatMap((section) => section.lines)
+    .filter((line) => /week\s*\d+|day\s*\d+|module\s*\d+/i.test(line))
+    .slice(0, 8)
+    .map((line) => ({
+      title: line,
+      tasks: sections.flatMap((section) => section.lines).filter((item) => item !== line).slice(0, 3),
+    }));
+
+  const flowSteps = flowPool.steps.slice(0, 10);
+
+  const branches = [
+    { title: 'Snapshot', items: buckets.snapshot.slice(0, 6) },
+    { title: 'High Priority', items: buckets.priorities.high.slice(0, 6) },
+    { title: 'Medium Priority', items: buckets.priorities.medium.slice(0, 6) },
+    { title: 'Low Priority', items: buckets.priorities.low.slice(0, 6) },
+    { title: 'Roadmap', items: buckets.roadmap.slice(0, 6) },
+    { title: 'Flow', items: flowSteps.slice(0, 6) },
+    { title: 'Revision', items: buckets.revision.slice(0, 6) },
+  ].filter((branch) => branch.items.length);
+
+  const conceptCards = [
+    { title: 'Snapshot', tone: 'cyan', items: buckets.snapshot.slice(0, 5) },
+    { title: 'Priorities', tone: 'violet', items: [...buckets.priorities.high, ...buckets.priorities.medium, ...buckets.priorities.low].slice(0, 7) },
+    { title: 'Roadmap', tone: 'amber', items: buckets.roadmap.slice(0, 6) },
+    { title: 'Revision', tone: 'green', items: buckets.revision.slice(0, 6) },
+  ];
+
+  return {
+    title: subject,
+    sections,
+    snapshot: buckets.snapshot.slice(0, 6),
+    priorities: buckets.priorities,
+    weeks,
+    flowSteps,
+    flowDetails: flowPool.details,
+    branches,
+    conceptCards,
+  };
+}
+
+function svgWrapText(text, maxChars) {
+  const words = String(text).split(' ');
+  const lines = [];
+  let current = '';
+
+  words.forEach((word) => {
+    if ((`${current} ${word}`).trim().length > maxChars) {
+      if (current) lines.push(current.trim());
+      current = word;
+    } else {
+      current += ` ${word}`;
+    }
+  });
+
+  if (current.trim()) lines.push(current.trim());
+  return lines;
+}
+
+export function generateSyllabusMindmapSVG(answer = '', subject = 'Syllabus') {
+  const model = buildSyllabusVisualModel(answer, subject);
+  const branchWidth = 220;
+  const itemWidth = 430;
+  const rootX = 90;
+  const branchX = 390;
+  const itemX = 700;
+  const rootY = 120;
+  const branchGap = 96;
+  const rowHeight = 44;
+
+  const sectionHeights = model.branches.map((branch) => 90 + (branch.items.length * rowHeight));
+  const svgHeight = Math.max(960, 220 + sectionHeights.reduce((acc, value) => acc + value + branchGap, 0));
+
+  let svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="${svgHeight}" viewBox="0 0 1280 ${svgHeight}">
+  <defs>
+    <linearGradient id="mindBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#09162e"/>
+      <stop offset="50%" stop-color="#2d215d"/>
+      <stop offset="100%" stop-color="#0b2f4d"/>
+    </linearGradient>
+    <linearGradient id="glassCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.30)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0.10)"/>
+    </linearGradient>
+    <linearGradient id="accentGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#6de4ff"/>
+      <stop offset="50%" stop-color="#a991ff"/>
+      <stop offset="100%" stop-color="#ff72b3"/>
+    </linearGradient>
+    <filter id="blurGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+    <marker id="mindArrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,4 L0,8 z" fill="#9fe8ff" />
+    </marker>
+    <style>
+      .root-text { font: 700 24px 'Segoe UI', sans-serif; fill: #ffffff; }
+      .branch-title { font: 700 16px 'Segoe UI', sans-serif; fill: #eefbff; }
+      .item-text { font: 500 13px 'Segoe UI', sans-serif; fill: #e8f3ff; }
+      .branch-box { rx: 18; ry: 18; fill: rgba(255,255,255,0.12); stroke: rgba(155,230,255,0.24); stroke-width: 1.5; }
+      .item-box { rx: 14; ry: 14; fill: rgba(255,255,255,0.09); stroke: rgba(180,170,255,0.22); stroke-width: 1.3; }
+      .connector { stroke: url(#accentGlow); stroke-width: 2.2; fill: none; marker-end: url(#mindArrow); opacity: 0.92; }
+      .panel-backdrop { fill: rgba(255,255,255,0.05); }
+    </style>
+  </defs>
+  <rect width="1280" height="${svgHeight}" fill="url(#mindBg)"/>
+  <circle cx="180" cy="170" r="120" fill="#6de4ff" opacity="0.16" filter="url(#blurGlow)"/>
+  <circle cx="1050" cy="240" r="180" fill="#a991ff" opacity="0.14" filter="url(#blurGlow)"/>
+  <circle cx="980" cy="680" r="220" fill="#ff72b3" opacity="0.09" filter="url(#blurGlow)"/>
+`;
+
+  svg += `
+  <rect x="${rootX}" y="${rootY - 42}" width="250" height="84" rx="22" fill="rgba(255,255,255,0.17)" stroke="rgba(255,255,255,0.18)"/>
+  <text x="${rootX + 18}" y="${rootY - 8}" class="root-text">${escapeXml(model.title)}</text>
+  <text x="${rootX + 18}" y="${rootY + 20}" class="item-text">Holographic syllabus mind map</text>
+`;
+
+  let cursorY = 85;
+  model.branches.forEach((branch, index) => {
+    const branchHeight = Math.max(90, 70 + branch.items.length * rowHeight);
+    const branchMidY = cursorY + 40;
+    const cardY = cursorY;
+
+    svg += `
+  <path d="M ${rootX + 250} ${rootY} C ${rootX + 330} ${rootY}, ${branchX - 80} ${branchMidY}, ${branchX} ${branchMidY}" class="connector"/>
+  <rect x="${branchX}" y="${cardY}" width="${branchWidth}" height="${branchHeight}" class="branch-box"/>
+  <rect x="${branchX + 10}" y="${cardY + 10}" width="${branchWidth - 20}" height="30" rx="12" fill="rgba(110, 228, 255, 0.14)"/>
+  <text x="${branchX + 22}" y="${cardY + 31}" class="branch-title">${escapeXml(branch.title)}</text>
+`;
+
+    branch.items.forEach((item, itemIndex) => {
+      const itemY = cardY + 48 + itemIndex * rowHeight;
+      const itemMidY = itemY + 18;
+      const textLines = svgWrapText(item, 52).slice(0, 2);
+
+      svg += `
+  <path d="M ${branchX + branchWidth} ${branchMidY} C ${branchX + branchWidth + 30} ${branchMidY}, ${itemX - 60} ${itemMidY}, ${itemX} ${itemMidY}" class="connector"/>
+  <rect x="${itemX}" y="${itemY}" width="${itemWidth}" height="34" class="item-box"/>
+`;
+
+      textLines.forEach((line, lineIndex) => {
+        svg += `  <text x="${itemX + 14}" y="${itemY + 15 + (lineIndex * 14)}" class="item-text">${escapeXml(line)}</text>
+`;
+      });
+    });
+
+    cursorY += branchHeight + branchGap;
+  });
+
+  svg += `
+</svg>`;
+  return svg;
+}
+
+export function generateSyllabusFlowchartSVG(answer = '', subject = 'Syllabus') {
+  const model = buildSyllabusVisualModel(answer, subject);
+  const steps = model.flowSteps.length ? model.flowSteps : [...model.snapshot, ...model.revision].slice(0, 6);
+  const detailPool = model.flowDetails?.length
+    ? model.flowDetails
+    : [...model.roadmap || [], ...model.revision || [], ...model.snapshot || []];
+  const width = 1240;
+  const height = Math.max(760, 180 + steps.length * 110);
+
+  let svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <defs>
+    <linearGradient id="flowBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#07111d"/>
+      <stop offset="100%" stop-color="#182851"/>
+    </linearGradient>
+    <linearGradient id="flowCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.24)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0.08)"/>
+    </linearGradient>
+    <linearGradient id="flowGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#6de4ff"/>
+      <stop offset="100%" stop-color="#a991ff"/>
+    </linearGradient>
+    <marker id="flowArrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,4 L0,8 z" fill="#6de4ff" />
+    </marker>
+    <style>
+      .title { font: 800 26px 'Segoe UI', sans-serif; fill: #fff; }
+      .sub { font: 500 13px 'Segoe UI', sans-serif; fill: rgba(255,255,255,0.76); }
+      .step-title { font: 700 15px 'Segoe UI', sans-serif; fill: #f6fbff; }
+      .step-desc { font: 500 12px 'Segoe UI', sans-serif; fill: rgba(255,255,255,0.84); }
+      .step-box { rx: 18; ry: 18; fill: url(#flowCard); stroke: rgba(109,228,255,0.22); stroke-width: 1.4; }
+      .arrow { stroke: url(#flowGlow); stroke-width: 3; fill: none; marker-end: url(#flowArrow); }
+      .index { fill: rgba(109,228,255,0.18); stroke: rgba(109,228,255,0.32); stroke-width: 1; }
+    </style>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#flowBg)"/>
+`;
+
+  svg += `
+  <text x="70" y="58" class="title">${escapeXml(`${model.title} - Detailed Flowchart`)}</text>
+  <text x="70" y="84" class="sub">How to study, what to do, and in what sequence</text>
+`;
+
+  const x = 70;
+  const yStart = 130;
+  const boxWidth = 1100;
+  const boxHeight = 72;
+
+  steps.forEach((step, idx) => {
+    const y = yStart + idx * 110;
+    svg += `
+  <rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" class="step-box"/>
+  <circle cx="${x + 42}" cy="${y + 36}" r="18" class="index"/>
+  <text x="${x + 42}" y="${y + 41}" text-anchor="middle" class="step-title">${idx + 1}</text>
+  <text x="${x + 82}" y="${y + 28}" class="step-title">${escapeXml(step)}</text>
+`;
+
+    const desc = detailPool[idx]
+      || detailPool[(idx + 1) % Math.max(detailPool.length, 1)]
+      || 'Follow this step and complete one focused task before moving ahead.';
+    svg += `
+  <text x="${x + 82}" y="${y + 50}" class="step-desc">${escapeXml(desc)}</text>
+`;
+
+    if (idx < steps.length - 1) {
+      svg += `
+  <path d="M ${x + boxWidth / 2} ${y + boxHeight} L ${x + boxWidth / 2} ${y + boxHeight + 28}" class="arrow"/>
+`;
+    }
+  });
+
+  svg += `
+</svg>`;
+  return svg;
+}
+
+export function downloadSvgAsset(svgContent, filename = 'visual-lab.svg') {
+  const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
