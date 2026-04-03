@@ -1,0 +1,28 @@
+{
+  "users": [
+    {
+      "id": "usr_cb3e1589-4ed1-4d52-9782-8e0f9a695ee8",
+      "name": "Shub Demo",
+      "email": "shub.demo@example.com",
+      "passwordHash": "$2a$10$N/DvBEg5s/SXl6LYdm.p/OW8DIRKnBdsZ2x9m8c2Iy8yDx/cjJHJu",
+      "authProvider": "local",
+      "createdAt": "2026-03-25T11:08:14.170Z",
+      "preferences": {
+        "theme": "light",
+        "focusMode": false
+      }
+    },
+    {
+      "id": "usr_8a4286ef-b68b-4864-b55c-e76c68b1ab2d",
+      "name": "Bipasha Rehan",
+      "email": "rehanbharat167@gmail.com",
+      "authProvider": "google",
+      "createdAt": "2026-04-01T13:24:22.158Z",
+      "preferences": {
+        "theme": "light",
+        "focusMode": false
+      },
+      "updatedAt": "2026-04-01T13:24:22.159Z"
+    }
+  ]
+}
