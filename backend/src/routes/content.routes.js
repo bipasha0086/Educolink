@@ -62,29 +62,56 @@ function decodeHtmlEntities(value = '') {
 
 function parseTranscriptXml(xml = '') {
   const entries = [];
-  const paragraphRegex = /<p\s+t="(\d+)"\s+d="(\d+)"[^>]*>([\s\S]*?)<\/p>/g;
-  let paragraphMatch;
 
-  while ((paragraphMatch = paragraphRegex.exec(xml)) !== null) {
-    const offset = Number.parseInt(paragraphMatch[1], 10);
-    const duration = Number.parseInt(paragraphMatch[2], 10);
-    const inner = paragraphMatch[3];
-    let text = '';
+  const parseNodeEntries = (nodeRegex, timeExtractor) => {
+    let nodeMatch;
+    while ((nodeMatch = nodeRegex.exec(xml)) !== null) {
+      const attrs = String(nodeMatch[1] || '');
+      const inner = String(nodeMatch[2] || '');
+      const { offset, duration } = timeExtractor(attrs);
 
-    const spanRegex = /<s[^>]*>([^<]*)<\/s>/g;
-    let spanMatch;
-    while ((spanMatch = spanRegex.exec(inner)) !== null) {
-      text += spanMatch[1];
+      let text = '';
+      const spanRegex = /<s[^>]*>([\s\S]*?)<\/s>/g;
+      let spanMatch;
+      while ((spanMatch = spanRegex.exec(inner)) !== null) {
+        text += spanMatch[1];
+      }
+
+      if (!text) {
+        text = inner;
+      }
+
+      text = decodeHtmlEntities(text)
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (text) {
+        entries.push({ text, offset, duration });
+      }
     }
+  };
 
-    if (!text) {
-      text = inner.replace(/<[^>]+>/g, '');
-    }
+  // Newer caption XML often uses <p t="..." d="..."> nodes.
+  parseNodeEntries(/<p\b([^>]*)>([\s\S]*?)<\/p>/g, (attrs) => {
+    const t = attrs.match(/\bt="([0-9.]+)"/i)?.[1] || '0';
+    const d = attrs.match(/\bd="([0-9.]+)"/i)?.[1] || '0';
+    return {
+      offset: Number.parseFloat(t) || 0,
+      duration: Number.parseFloat(d) || 0,
+    };
+  });
 
-    text = decodeHtmlEntities(text).trim();
-    if (text) {
-      entries.push({ text, offset, duration });
-    }
+  // Older caption XML may use <text start="..." dur="..."> nodes.
+  if (!entries.length) {
+    parseNodeEntries(/<text\b([^>]*)>([\s\S]*?)<\/text>/g, (attrs) => {
+      const start = attrs.match(/\bstart="([0-9.]+)"/i)?.[1] || '0';
+      const dur = attrs.match(/\bdur="([0-9.]+)"/i)?.[1] || '0';
+      return {
+        offset: Number.parseFloat(start) || 0,
+        duration: Number.parseFloat(dur) || 0,
+      };
+    });
   }
 
   return entries;
@@ -130,6 +157,22 @@ function pickPreferredEnglishTrack(tracks = []) {
 
   const firstManual = tracks.find((track) => !isAsr(track?.kind));
   return firstManual || tracks[0] || null;
+}
+
+function looksEnglishTranscript(text = '') {
+  const sample = String(text || '').toLowerCase().slice(0, 4000);
+  if (!sample.trim()) return false;
+
+  const englishMarkers = [
+    ' the ', ' and ', ' is ', ' are ', ' of ', ' to ', ' in ', ' for ', ' with ',
+    'this', 'that', 'from', 'you', 'your', 'how', 'what', 'when', 'where',
+  ];
+
+  const markerHits = englishMarkers.reduce((count, marker) => count + (sample.includes(marker) ? 1 : 0), 0);
+  if (markerHits >= 2) return true;
+
+  const lettersOnly = sample.replace(/[^a-z]/g, '');
+  return lettersOnly.length >= Math.max(120, Math.floor(sample.length * 0.5));
 }
 
 async function fetchTranscriptTracks(videoId) {
@@ -198,28 +241,53 @@ async function fetchLectureTranscriptByVideoId(videoId) {
   }
 
   const hasEnglishTrack = tracks.some((track) => /^en(-|$)/i.test(String(track?.languageCode || '')));
-  const transcriptUrl = hasEnglishTrack
-    ? selectedTrack.baseUrl
-    : `${selectedTrack.baseUrl}${selectedTrack.baseUrl.includes('?') ? '&' : '?'}tlang=en`;
+  const uniqueUrls = new Set();
 
-  const transcriptResponse = await fetch(transcriptUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
-
-  if (!transcriptResponse.ok) {
-    throw new Error('Transcript track could not be loaded.');
+  uniqueUrls.add(`${selectedTrack.baseUrl}${selectedTrack.baseUrl.includes('?') ? '&' : '?'}tlang=en`);
+  uniqueUrls.add(selectedTrack.baseUrl);
+  if (!hasEnglishTrack) {
+    uniqueUrls.add(`${selectedTrack.baseUrl}${selectedTrack.baseUrl.includes('?') ? '&' : '?'}tlang=en`);
   }
 
-  const xml = await transcriptResponse.text();
-  const parts = parseTranscriptXml(xml);
-  if (!parts.length) {
-    throw new Error('Transcript data is empty.');
+  // Try a few additional tracks and pick the most complete transcript.
+  for (const track of tracks.slice(0, 4)) {
+    if (track?.baseUrl) {
+      if (/^en(-|$)/i.test(String(track?.languageCode || ''))) {
+        uniqueUrls.add(track.baseUrl);
+      }
+      uniqueUrls.add(track.baseUrl);
+      uniqueUrls.add(`${track.baseUrl}${track.baseUrl.includes('?') ? '&' : '?'}tlang=en`);
+    }
   }
 
-  return parts;
+  let bestParts = [];
+  for (const transcriptUrl of uniqueUrls) {
+    const transcriptResponse = await fetch(transcriptUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+
+    if (!transcriptResponse.ok) {
+      continue;
+    }
+
+    const xml = await transcriptResponse.text();
+    const parts = parseTranscriptXml(xml);
+    if (parts.length > bestParts.length) {
+      const joined = parts.map((part) => part.text).join(' ');
+      if (looksEnglishTranscript(joined)) {
+        bestParts = parts;
+      }
+    }
+  }
+
+  if (!bestParts.length) {
+    throw new Error('English transcript is not available for this lecture.');
+  }
+
+  return bestParts;
 }
 
 router.get('/modules', (_req, res) => {

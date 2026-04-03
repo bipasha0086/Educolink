@@ -9,7 +9,8 @@ import {
   IoDocumentTextOutline,
   IoOpenOutline,
   IoSaveOutline,
-  IoCopyOutline
+  IoCopyOutline,
+  IoSearchOutline
 } from 'react-icons/io5';
 import { FloatingParticles, GradientMesh } from '../components/SVGBackgrounds/SVGBackgrounds';
 import { askEducoAssist, fetchLectureTranscript, verifyLectureVideo } from '../services/api';
@@ -143,6 +144,7 @@ export default function LectureZone() {
   const [lectureSearch, setLectureSearch] = useState('');
   const [strictLectureMode, setStrictLectureMode] = useState(true);
   const [embedChecking, setEmbedChecking] = useState(false);
+  const [activeToolTitle, setActiveToolTitle] = useState('Live Lectures');
 
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -157,6 +159,7 @@ export default function LectureZone() {
   const [summaryError, setSummaryError] = useState('');
 
   const lectureSubjects = ['All', ...new Set(YT_LECTURE_LIBRARY.map((entry) => entry.subject))];
+  const activeTool = lectureTools.find((tool) => tool.title === activeToolTitle) || lectureTools[0];
   const filteredLectures = YT_LECTURE_LIBRARY.filter((entry) => {
     const subjectMatch = lectureSubjectFilter === 'All' || entry.subject === lectureSubjectFilter;
     const q = lectureSearch.trim().toLowerCase();
@@ -167,6 +170,7 @@ export default function LectureZone() {
     return subjectMatch && searchMatch;
   });
   const activeEmbedUrl = extractYoutubeEmbedUrl(lectureUrl || selectedLecture?.url || '');
+  const curatedCount = filteredLectures.length;
 
   useEffect(() => {
     const saved = localStorage.getItem('lecturezone-notes');
@@ -256,8 +260,8 @@ export default function LectureZone() {
     try {
       const popup = window.open(lectureUrl.trim(), '_blank', 'noopener,noreferrer');
       if (!popup) {
-        setLectureMessageType('error');
-        setLectureMessage('Popup blocked by browser. Please allow popups and try again.');
+        setLectureMessageType('success');
+        setLectureMessage('Popup was blocked. Lecture is still ready below in the embedded player.');
         return;
       }
 
@@ -397,9 +401,16 @@ export default function LectureZone() {
       return;
     }
 
+    // Keep source of transcript unambiguous: stop live mic capture before fetching YouTube captions.
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+    }
+
     setTranscriptLoading(true);
     setTranscriptError('');
     setTranscriptStatus('Fetching transcript...');
+    setTranscript('');
 
     try {
       const candidateUrls = strictLectureMode
@@ -481,6 +492,21 @@ export default function LectureZone() {
     }
   };
 
+  const jumpToSummary = () => {
+    if (!summaryInput.trim()) {
+      const seed = transcript.trim() || lectureNotes.trim() || `Lecture topic: ${lectureTopic}`;
+      setSummaryInput(seed);
+    }
+    setActiveToolTitle('Quick Summaries');
+  };
+
+  const jumpToTranscript = () => {
+    if (!transcriptUrl.trim()) {
+      setTranscriptUrl(lectureUrl || selectedLecture?.url || '');
+    }
+    setActiveToolTitle('Transcripts');
+  };
+
   return (
     <div className="module-page">
       <FloatingParticles />
@@ -503,49 +529,174 @@ export default function LectureZone() {
         </div>
       </motion.div>
 
-      <div className="feature-grid">
-        {lectureTools.map((tool, idx) => (
-          <motion.div
+      <div className="lecture-tool-switcher">
+        {lectureTools.map((tool) => (
+          <button
             key={tool.title}
-            className="feature-card"
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
+            type="button"
+            className={`lecture-tool-tab ${activeToolTitle === tool.title ? 'active' : ''}`}
+            onClick={() => setActiveToolTitle(tool.title)}
           >
-            <div className="module-card-illustration" style={{ opacity: 0.08, transform: idx % 2 === 0 ? 'rotate(-5deg)' : 'rotate(8deg)' }}>
-              {tool.icon}
-            </div>
-            <div className="feature-card-header">
-              <div className="feature-card-icon" style={{ background: 'rgba(122,0,31,0.14)', color: '#7a001f' }}>
-                {tool.icon}
-              </div>
-              <div>
-                <div className="feature-card-title">{tool.title}</div>
-                <div className="feature-card-subtitle">Lecture workflow</div>
-              </div>
-            </div>
-            <div className="feature-card-body">
-              <div className="feature-item">
-                <div className="feature-item-icon" style={{ background: 'rgba(122,0,31,0.14)', color: '#7a001f' }}>
-                  <IoBookOutline />
-                </div>
-                {tool.text}
-              </div>
+            <span className="lecture-tool-tab-icon" aria-hidden="true">{tool.icon}</span>
+            <span className="lecture-tool-tab-title">{tool.title}</span>
+          </button>
+        ))}
+      </div>
 
-              {tool.title === 'Live Lectures' && (
-                <>
-                  <label className="tools-label">Educational YouTube Lecture Library</label>
-                  <div className="tools-chip-row">
-                    {lectureSubjects.map((subjectEntry) => (
-                      <button
-                        key={subjectEntry}
-                        type="button"
-                        className={`tools-chip ${lectureSubjectFilter === subjectEntry ? 'active' : ''}`}
-                        onClick={() => setLectureSubjectFilter(subjectEntry)}
-                      >
-                        {subjectEntry}
-                      </button>
-                    ))}
+      <div className="feature-grid single-card">
+        <motion.div
+          key={activeTool.title}
+          className="feature-card"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <div className="feature-card-body">
+            {activeTool.title !== 'Live Lectures' && (
+              <>
+                <div className="module-card-illustration" style={{ opacity: 0.08, transform: 'rotate(-4deg)' }}>
+                  {activeTool.icon}
+                </div>
+                <div className="feature-card-header">
+                  <div className="feature-card-icon" style={{ background: 'rgba(122,0,31,0.14)', color: '#7a001f' }}>
+                    {activeTool.icon}
                   </div>
+                  <div>
+                    <div className="feature-card-title">{activeTool.title}</div>
+                    <div className="feature-card-subtitle">Lecture workflow</div>
+                  </div>
+                </div>
+                <div className="feature-item">
+                  <div className="feature-item-icon" style={{ background: 'rgba(122,0,31,0.14)', color: '#7a001f' }}>
+                    <IoBookOutline />
+                  </div>
+                  {activeTool.text}
+                </div>
+              </>
+            )}
+
+            {activeTool.title === 'Live Lectures' && (
+                <>
+                  <div className="lecture-live-layout">
+                    <div className="lecture-library-card">
+                      <h3 className="lecture-panel-title">Lecture Library</h3>
+                      <div className="tools-chip-row">
+                        {lectureSubjects.map((subjectEntry) => (
+                          <button
+                            key={subjectEntry}
+                            type="button"
+                            className={`tools-chip ${lectureSubjectFilter === subjectEntry ? 'active' : ''}`}
+                            onClick={() => setLectureSubjectFilter(subjectEntry)}
+                          >
+                            {subjectEntry}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="lecture-search-wrap">
+                        <IoSearchOutline className="lecture-search-icon" />
+                        <input
+                          className="tools-input"
+                          value={lectureSearch}
+                          onChange={(event) => setLectureSearch(event.target.value)}
+                          placeholder="Search lectures or channels..."
+                        />
+                      </div>
+
+                      <div className="tools-inline-status">
+                        {strictLectureMode
+                          ? 'Smart: only curated lecture links can open.'
+                          : 'Custom links allowed, but study focused only.'}
+                      </div>
+
+                      <div className="lecture-list-scroll">
+                        {filteredLectures.length === 0 && (
+                          <div className="tools-inline-status">No lectures found for this filter.</div>
+                        )}
+                        {filteredLectures.map((lecture) => {
+                          const isActive = getYoutubeVideoId(lecture.url) === getYoutubeVideoId(lectureUrl);
+                          return (
+                            <button
+                              key={`${lecture.subject}-${lecture.title}`}
+                              type="button"
+                              className={`lecture-list-row ${isActive ? 'active' : ''}`}
+                              onClick={() => pickLibraryLecture(lecture)}
+                            >
+                              <span className="lecture-list-row-icon"><IoPlayCircleOutline /></span>
+                              <span className="lecture-list-row-text">
+                                <span>{lecture.subject}: {lecture.title}</span>
+                                <small>{lecture.channel}</small>
+                              </span>
+                              <IoChevronForward />
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="tools-inline-status">{curatedCount} curated YouTube lectures open.</div>
+
+                      <div className="lecture-selected-strip">
+                        {[selectedLecture, ...filteredLectures.filter((entry) => entry.title !== selectedLecture?.title).slice(0, 1)].map((lecture) => (
+                          <button
+                            key={`selected-${lecture.subject}-${lecture.title}`}
+                            type="button"
+                            className="lecture-list-row active"
+                            onClick={() => pickLibraryLecture(lecture)}
+                          >
+                            <span className="lecture-list-row-icon"><IoPlayCircleOutline /></span>
+                            <span className="lecture-list-row-text">
+                              <span>{lecture.subject}: {lecture.title}</span>
+                              <small>{lecture.channel}</small>
+                            </span>
+                            <IoChevronForward />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="lecture-details-card">
+                      <h3 className="lecture-panel-title">Lecture Details</h3>
+
+                      <label className="tools-label">Lecture Topic</label>
+                      <input
+                        className="tools-input"
+                        value={lectureTopic}
+                        onChange={(event) => setLectureTopic(event.target.value)}
+                        placeholder="Ex: Cell Biology Masterclass"
+                      />
+
+                      <label className="tools-label">YouTube Lecture Link</label>
+                      <input
+                        className="tools-input"
+                        value={lectureUrl}
+                        onChange={(event) => setLectureUrl(event.target.value)}
+                        readOnly={strictLectureMode}
+                        placeholder={strictLectureMode ? 'Library controlled link' : 'Paste a study-focused YouTube lecture link'}
+                      />
+
+                      <div className="tools-action-row">
+                        <button className="btn-primary" onClick={openLecture}><IoOpenOutline /> Open YouTube Lecture</button>
+                      </div>
+
+                      <div className="lecture-mini-actions">
+                        <button type="button" className="btn-secondary" onClick={jumpToSummary}><IoDocumentTextOutline /> Generate Summary</button>
+                        <button type="button" className="btn-secondary" onClick={() => setLectureMessage('Use Synchronized Notes section below to create notes quickly.')}><IoSaveOutline /> Generate Notes</button>
+                        <button type="button" className="btn-secondary" onClick={() => setLectureMessage('Quiz generator can be added next.')}><IoDocumentTextOutline /> Generate Quiz</button>
+                        <button type="button" className="btn-secondary" onClick={jumpToTranscript}><IoCopyOutline /> Use Transcript</button>
+                      </div>
+
+                      <div className="lecture-overview-card">
+                        <h4 className="lecture-overview-title">Lecture Overview</h4>
+                        {embedChecking && <div className="tools-inline-status">Checking lecture availability...</div>}
+                        <div className="lecture-mini-actions">
+                          <button type="button" className="btn-secondary" onClick={jumpToSummary}><IoDocumentTextOutline /> Generate Summary</button>
+                          <button type="button" className="btn-secondary" onClick={() => setLectureMessage('Use Notes Hub for advanced note templates.')}><IoSaveOutline /> Generate Notes</button>
+                          <button type="button" className="btn-secondary" onClick={() => setLectureMessage('Quiz generator can be added next.')}><IoDocumentTextOutline /> Generate Quiz</button>
+                          <button type="button" className="btn-secondary" onClick={jumpToTranscript}><IoSaveOutline /> Save Transcript</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="tools-action-row">
                     <button
                       type="button"
@@ -562,88 +713,12 @@ export default function LectureZone() {
                       Strict Mode Off
                     </button>
                   </div>
-                  <div className="tools-inline-status">
-                    {strictLectureMode
-                      ? 'Strict mode is ON: only curated library lectures can open.'
-                      : 'Strict mode is OFF: only study-focused YouTube lectures are allowed.'}
-                  </div>
-                  <input
-                    className="tools-input"
-                    value={lectureSearch}
-                    onChange={(event) => setLectureSearch(event.target.value)}
-                    placeholder="Search lecture by topic, channel, or subject"
-                  />
-                  <div className="tools-list-item" style={{ maxHeight: '220px', overflow: 'auto' }}>
-                    {filteredLectures.length === 0 && (
-                      <div className="tools-inline-status">No lectures found for this filter.</div>
-                    )}
-                    {filteredLectures.map((lecture) => (
-                      <button
-                        key={`${lecture.subject}-${lecture.title}`}
-                        type="button"
-                        className="feature-item-btn"
-                        onClick={() => pickLibraryLecture(lecture)}
-                      >
-                        {lecture.subject}: {lecture.title} ({lecture.channel})
-                      </button>
-                    ))}
-                  </div>
-                  {embedChecking && <div className="tools-inline-status">Checking lecture availability...</div>}
 
-                  <label className="tools-label">Lecture Topic</label>
-                  <input
-                    className="tools-input"
-                    value={lectureTopic}
-                    onChange={(event) => setLectureTopic(event.target.value)}
-                    placeholder="Ex: Cell Biology Masterclass"
-                  />
-                  <label className="tools-label">YouTube Lecture Link {strictLectureMode ? '(Library Controlled)' : '(Study Focused)'}</label>
-                  <input
-                    className="tools-input"
-                    value={lectureUrl}
-                    onChange={(event) => setLectureUrl(event.target.value)}
-                    readOnly={strictLectureMode}
-                    placeholder={strictLectureMode ? 'Select from library above' : 'Paste a study-focused YouTube lecture link'}
-                  />
-                  <div className="tools-inline-status">
-                    {strictLectureMode
-                      ? 'Only curated educational library videos are allowed.'
-                      : 'Custom links must still be study-focused YouTube lectures.'}
-                  </div>
-                  <div className="tools-action-row">
-                    <button className="btn-primary" onClick={openLecture}><IoOpenOutline /> Open YouTube Lecture</button>
-                  </div>
-
-                  {activeEmbedUrl && !embedChecking && (
-                    <div className="tools-list-item" style={{ padding: '0.35rem', overflow: 'hidden' }}>
-                      <iframe
-                        src={activeEmbedUrl}
-                        title="Educational YouTube Lecture"
-                        width="100%"
-                        height="240"
-                        style={{ border: 0, borderRadius: '12px' }}
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        allowFullScreen
-                        loading="lazy"
-                      />
-                    </div>
-                  )}
-
-                  <label className="tools-label">Synchronized Notes</label>
-                  <textarea
-                    className="tools-textarea"
-                    value={lectureNotes}
-                    onChange={(event) => setLectureNotes(event.target.value)}
-                    placeholder="Type notes while lecture is running..."
-                  />
-                  <div className="tools-action-row">
-                    <button className="btn-secondary" onClick={saveLectureNotes}><IoSaveOutline /> Save Notes</button>
-                  </div>
                   {lectureMessage && <div className={`upload-message ${lectureMessageType}`}>{lectureMessage}</div>}
                 </>
               )}
 
-              {tool.title === 'Transcripts' && (
+            {activeTool.title === 'Transcripts' && (
                 <>
                   <label className="tools-label">YouTube Lecture Link for Transcript</label>
                   <input
@@ -675,7 +750,7 @@ export default function LectureZone() {
                 </>
               )}
 
-              {tool.title === 'Quick Summaries' && (
+            {activeTool.title === 'Quick Summaries' && (
                 <>
                   <label className="tools-label">Lecture Text / Transcript</label>
                   <textarea
@@ -704,9 +779,8 @@ export default function LectureZone() {
                   )}
                 </>
               )}
-            </div>
-          </motion.div>
-        ))}
+          </div>
+        </motion.div>
       </div>
     </div>
   );
