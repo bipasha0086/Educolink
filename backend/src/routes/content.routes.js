@@ -32,6 +32,196 @@ function normalizeWebResults(results = []) {
     }));
 }
 
+function extractYoutubeVideoId(rawUrl = '') {
+  const url = String(rawUrl || '').trim();
+  if (!url) return '';
+
+  const embedMatch = url.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/i);
+  if (embedMatch?.[1]) return embedMatch[1];
+
+  const shortMatch = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/i);
+  if (shortMatch?.[1]) return shortMatch[1];
+
+  const watchMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/i);
+  if (watchMatch?.[1]) return watchMatch[1];
+
+  return '';
+}
+
+function decodeHtmlEntities(value = '') {
+  return String(value || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_match, dec) => String.fromCodePoint(Number.parseInt(dec, 10)));
+}
+
+function parseTranscriptXml(xml = '') {
+  const entries = [];
+  const paragraphRegex = /<p\s+t="(\d+)"\s+d="(\d+)"[^>]*>([\s\S]*?)<\/p>/g;
+  let paragraphMatch;
+
+  while ((paragraphMatch = paragraphRegex.exec(xml)) !== null) {
+    const offset = Number.parseInt(paragraphMatch[1], 10);
+    const duration = Number.parseInt(paragraphMatch[2], 10);
+    const inner = paragraphMatch[3];
+    let text = '';
+
+    const spanRegex = /<s[^>]*>([^<]*)<\/s>/g;
+    let spanMatch;
+    while ((spanMatch = spanRegex.exec(inner)) !== null) {
+      text += spanMatch[1];
+    }
+
+    if (!text) {
+      text = inner.replace(/<[^>]+>/g, '');
+    }
+
+    text = decodeHtmlEntities(text).trim();
+    if (text) {
+      entries.push({ text, offset, duration });
+    }
+  }
+
+  return entries;
+}
+
+function parseInlineJson(html = '', variableName) {
+  const marker = `var ${variableName} = `;
+  const startIndex = html.indexOf(marker);
+  if (startIndex === -1) return null;
+
+  const jsonStart = startIndex + marker.length;
+  let depth = 0;
+
+  for (let index = jsonStart; index < html.length; index += 1) {
+    const char = html[index];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(jsonStart, index + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function pickPreferredEnglishTrack(tracks = []) {
+  if (!Array.isArray(tracks) || !tracks.length) return null;
+
+  const isEnglishCode = (code = '') => /^en(-|$)/i.test(String(code || ''));
+  const isAsr = (kind = '') => String(kind || '').toLowerCase() === 'asr';
+
+  const englishManual = tracks.find((track) => isEnglishCode(track?.languageCode) && !isAsr(track?.kind));
+  if (englishManual) return englishManual;
+
+  const englishAny = tracks.find((track) => isEnglishCode(track?.languageCode));
+  if (englishAny) return englishAny;
+
+  const firstManual = tracks.find((track) => !isAsr(track?.kind));
+  return firstManual || tracks[0] || null;
+}
+
+async function fetchTranscriptTracks(videoId) {
+  const innerTubeUrl = 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
+  const innerTubeResponse = await fetch(innerTubeUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'com.google.android.youtube/20.10.38 (Linux; U; Android 14)',
+    },
+    body: JSON.stringify({
+      context: {
+        client: {
+          clientName: 'ANDROID',
+          clientVersion: '20.10.38',
+        },
+      },
+      videoId,
+    }),
+  });
+
+  if (innerTubeResponse.ok) {
+    const innerTubeData = await innerTubeResponse.json();
+    const trackList = innerTubeData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    if (Array.isArray(trackList) && trackList.length > 0) {
+      return trackList;
+    }
+  }
+
+  const watchResponse = await fetch(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  });
+
+  if (!watchResponse.ok) {
+    throw new Error('YouTube watch page could not be loaded.');
+  }
+
+  const html = await watchResponse.text();
+  if (html.includes('class="g-recaptcha"')) {
+    throw new Error('YouTube is rate-limiting transcript access from this IP.');
+  }
+
+  if (!html.includes('"playabilityStatus":')) {
+    throw new Error('The video is unavailable.');
+  }
+
+  const playerResponse = parseInlineJson(html, 'ytInitialPlayerResponse');
+  const trackList = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+  if (!Array.isArray(trackList) || trackList.length === 0) {
+    throw new Error('No transcripts are available for this video.');
+  }
+
+  return trackList;
+}
+
+async function fetchLectureTranscriptByVideoId(videoId) {
+  const tracks = await fetchTranscriptTracks(videoId);
+  const selectedTrack = pickPreferredEnglishTrack(tracks);
+
+  if (!selectedTrack?.baseUrl) {
+    throw new Error('No transcript track was found.');
+  }
+
+  const hasEnglishTrack = tracks.some((track) => /^en(-|$)/i.test(String(track?.languageCode || '')));
+  const transcriptUrl = hasEnglishTrack
+    ? selectedTrack.baseUrl
+    : `${selectedTrack.baseUrl}${selectedTrack.baseUrl.includes('?') ? '&' : '?'}tlang=en`;
+
+  const transcriptResponse = await fetch(transcriptUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  });
+
+  if (!transcriptResponse.ok) {
+    throw new Error('Transcript track could not be loaded.');
+  }
+
+  const xml = await transcriptResponse.text();
+  const parts = parseTranscriptXml(xml);
+  if (!parts.length) {
+    throw new Error('Transcript data is empty.');
+  }
+
+  return parts;
+}
+
 router.get('/modules', (_req, res) => {
   return res.json({ modules });
 });
@@ -233,6 +423,93 @@ router.get('/search/web', async (req, res) => {
     results,
     googleSearchUrl: `https://www.google.com/search?q=${encodeURIComponent(q)}`,
   });
+});
+
+router.post('/lectures/verify', async (req, res) => {
+  const rawUrl = String(req.body?.url || '').trim();
+
+  if (!rawUrl) {
+    return res.status(400).json({ message: 'Lecture URL is required.' });
+  }
+
+  if (!/(?:youtube\.com|youtu\.be)/i.test(rawUrl)) {
+    return res.status(400).json({ message: 'Only YouTube links are supported.' });
+  }
+
+  const videoId = extractYoutubeVideoId(rawUrl);
+  if (!videoId) {
+    return res.status(400).json({ message: 'Invalid YouTube video link.' });
+  }
+
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}`;
+
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`;
+    const response = await fetch(oembedUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+    });
+
+    if (!response.ok) {
+      return res.status(404).json({ message: 'This lecture video is unavailable or cannot be embedded.' });
+    }
+
+    const data = await response.json();
+    return res.json({
+      ok: true,
+      videoId,
+      watchUrl,
+      embedUrl,
+      title: String(data?.title || ''),
+      authorName: String(data?.author_name || ''),
+    });
+  } catch {
+    return res.status(502).json({ message: 'Unable to verify lecture video right now.' });
+  }
+});
+
+router.post('/lectures/transcript', async (req, res) => {
+  const url = String(req.body?.url || '').trim();
+
+  if (!url) {
+    return res.status(400).json({ message: 'Lecture URL is required.' });
+  }
+
+  if (!/(?:youtube\.com|youtu\.be)/i.test(url)) {
+    return res.status(400).json({ message: 'Only YouTube lecture links are supported.' });
+  }
+
+  const videoId = extractYoutubeVideoId(url);
+  if (!videoId) {
+    return res.status(400).json({ message: 'Could not read the YouTube video ID.' });
+  }
+
+  try {
+    const transcriptParts = await fetchLectureTranscriptByVideoId(videoId);
+    const transcriptText = transcriptParts
+      .map((part) => String(part?.text || '').trim())
+      .filter(Boolean)
+      .join(' ');
+
+    if (!transcriptText) {
+      return res.status(404).json({ message: 'No transcript found for this lecture.' });
+    }
+
+    return res.json({
+      videoId,
+      transcript: transcriptText,
+      parts: transcriptParts,
+    });
+  } catch (error) {
+    const message = String(error?.message || '').toLowerCase();
+    if (message.includes('transcript')) {
+      return res.status(404).json({ message: 'Transcript is not available for this lecture.' });
+    }
+
+    return res.status(502).json({ message: 'Unable to fetch transcript from YouTube right now.' });
+  }
 });
 
 router.post('/ai/ask', async (req, res) => {

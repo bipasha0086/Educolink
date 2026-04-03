@@ -58,6 +58,29 @@ const ambientSoundscapes = [
   },
 ];
 
+const motivationalThoughts = [
+  'Believe in yourself and your abilities.',
+  'Even small steps forward bring you closer to your dreams.',
+  'Success does not come overnight.',
+  'It is built with patience, hard work, and consistency.',
+  'Failures are not the end of the journey.',
+  'They are lessons that guide you toward success.',
+  'Dream big and work for it every day.',
+  'Your effort today shapes your future.',
+  'Stay positive even in difficult times.',
+  'Challenges make you stronger and wiser.',
+  'Never compare your journey with others.',
+  'Everyone grows at their own pace.',
+  'Keep moving forward, no matter how slow.',
+  'Progress is still progress.',
+  'Confidence comes from taking action.',
+  'The more you try, the stronger you become.',
+  'Your mindset can change your life.',
+  'Think positive, work hard, and stay focused.',
+  'The future belongs to those who believe in their dreams.',
+  'Trust the process and never give up.',
+];
+
 const triviaQuestions = [
   {
     question: 'Which habit helps concentration the most?',
@@ -780,7 +803,7 @@ function FunChallengesPanel() {
   };
 
   return (
-    <div className="fun-challenge-panel">
+    <div className={`fun-challenge-panel ${selectedGame ? 'is-active' : ''}`}>
       <div className="fun-challenge-body">
         <div className="fun-challenge-head">
           <p className="fun-challenge-title">Holo Game Arena</p>
@@ -993,7 +1016,16 @@ const breaks = [
 
 export default function BreakZone() {
   const [activeAmbient, setActiveAmbient] = useState(ambientSoundscapes[0].id);
+  const [thoughtIndex, setThoughtIndex] = useState(0);
   const selectedAmbient = ambientSoundscapes.find((sound) => sound.id === activeAmbient) || ambientSoundscapes[0];
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setThoughtIndex((prev) => (prev + 1) % motivationalThoughts.length);
+    }, 8000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   return (
     <div className="module-page">
@@ -1021,7 +1053,7 @@ export default function BreakZone() {
         {breaks.map((item, idx) => (
           <motion.div
             key={item.name}
-            className={`feature-card ${item.name === 'Mini Brain Games' ? 'brain-games-card' : ''}`}
+            className={`feature-card ${item.name === 'Mini Brain Games' ? 'brain-games-card' : ''} ${item.name === 'Fun Challenges' ? 'fun-challenge-card' : ''}`}
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             whileHover={{ y: -10, scale: 1.015 }}
@@ -1095,6 +1127,30 @@ export default function BreakZone() {
               )}
               {item.name === 'Fun Challenges' && <FunChallengesPanel />}
               {item.name === 'Mini Brain Games' && <MiniBrainGames />}
+              {item.name === 'Motivational Quote' && (
+                <div className="motivation-holo-shell" role="status" aria-live="polite">
+                  <div className="motivation-holo-orbs" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                  <p className="motivation-holo-title">Motivational Thoughts</p>
+                  <p className="motivation-holo-text">{motivationalThoughts[thoughtIndex]}</p>
+                  <div className="motivation-holo-progress" aria-hidden="true">
+                    <span
+                      className="motivation-holo-progress-fill"
+                      style={{ width: `${((thoughtIndex + 1) / motivationalThoughts.length) * 100}%` }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="feature-item-btn"
+                    onClick={() => setThoughtIndex((prev) => (prev + 1) % motivationalThoughts.length)}
+                  >
+                    Next Thought
+                  </button>
+                </div>
+              )}
             </div>
           </motion.div>
         ))}

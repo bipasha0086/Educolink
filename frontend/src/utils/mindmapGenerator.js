@@ -42,6 +42,7 @@ export function generatePlanDocument(planText, subject = 'Study Plan') {
   for (const line of planText.split('\n')) {
     document += `${line}\n`;
   }
+
   
   return document;
 }

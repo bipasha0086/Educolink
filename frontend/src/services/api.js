@@ -74,6 +74,41 @@ export async function askEducoAssist(prompt, options = 'chat') {
   };
 }
 
+export async function fetchLectureTranscript(url) {
+  const data = await requestJson('/api/lectures/transcript', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ url }),
+  });
+
+  return {
+    transcript: data?.transcript || '',
+    parts: Array.isArray(data?.parts) ? data.parts : [],
+    videoId: data?.videoId || '',
+  };
+}
+
+export async function verifyLectureVideo(url) {
+  const data = await requestJson('/api/lectures/verify', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ url }),
+  });
+
+  return {
+    ok: data?.ok === true,
+    videoId: data?.videoId || '',
+    watchUrl: data?.watchUrl || '',
+    embedUrl: data?.embedUrl || '',
+    title: data?.title || '',
+    authorName: data?.authorName || '',
+  };
+}
+
 export async function analyzeSyllabus(file, options = {}) {
   if (!(file instanceof File)) {
     throw new Error('Please upload a valid syllabus file.');

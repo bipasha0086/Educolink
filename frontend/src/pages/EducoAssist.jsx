@@ -79,12 +79,71 @@ const PROMPT_LIBRARY = {
 const MAX_RENDER_CHARS_CHAT = 12000;
 const MAX_RENDER_CHARS_PLAN = 14000;
 const MAX_RENDER_CHARS_SYLLABUS = 16000;
-const MAX_VOICE_SPEAK_CHARS = 700;
+
+function sanitizeAiResponse(text = '') {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^\s*[-*+•]\s+/gm, '')
+    .replace(/^\s*\d+[.)-]\s+/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 function normalizeAnswerLength(text = '', maxChars = MAX_RENDER_CHARS_CHAT) {
-  const clean = String(text || '').trim();
+  const clean = sanitizeAiResponse(text);
   if (clean.length <= maxChars) return clean;
   return `${clean.slice(0, maxChars)}\n\n...[Response shortened for smoother app performance]`;
+}
+
+function formatPlanOutput(text = '', maxLines = 25) {
+  const clean = sanitizeAiResponse(text);
+  const normalized = clean
+    .replace(/\s+(Day\s*\d+\s*:)/gi, '\n$1')
+    .replace(/\s+(Week\s*\d+\s*:)/gi, '\n$1');
+
+  const lines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, maxLines);
+
+  return lines.join('\n');
+}
+
+function getRequestedDays(text = '', fallback = 5) {
+  const match = String(text).match(/(\d{1,2})\s*-?\s*day/i);
+  if (!match) return fallback;
+  const parsed = Number(match[1]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(14, Math.max(1, parsed));
+}
+
+function enforcePlanDayCoverage(rawText = '', requestedDays = 5, maxLines = 25) {
+  const normalized = formatPlanOutput(rawText, 80);
+  const lines = normalized.split('\n').map((line) => line.trim()).filter(Boolean);
+  const dayRegex = /^day\s*(\d+)\s*:/i;
+  const presentDays = new Set();
+
+  lines.forEach((line) => {
+    const match = line.match(dayRegex);
+    if (match) {
+      presentDays.add(Number(match[1]));
+    }
+  });
+
+  for (let day = 1; day <= requestedDays; day += 1) {
+    if (!presentDays.has(day)) {
+      lines.push(`Day ${day}: Revise key concepts and solve focused practice questions.`);
+    }
+  }
+
+  const dayLines = lines.filter((line) => dayRegex.test(line));
+  const otherLines = lines.filter((line) => !dayRegex.test(line));
+  return [...dayLines, ...otherLines].slice(0, maxLines).join('\n');
 }
 
 function normalizeLine(line = '') {
@@ -221,7 +280,6 @@ export default function EducoAssist() {
         recognitionRef.current.stop();
         recognitionRef.current = null;
       }
-      window.speechSynthesis?.cancel?.();
     };
   }, []);
 
@@ -253,6 +311,7 @@ export default function EducoAssist() {
       });
 
       setAnswer(result.answer || 'No roadmap generated.');
+      setAnswer(normalizeAnswerLength(result.answer || 'No roadmap generated.', MAX_RENDER_CHARS_SYLLABUS));
       setSyllabusInfo({
         fileName: result.fileName,
         extractedChars: result.extractedChars,
@@ -298,16 +357,6 @@ export default function EducoAssist() {
       console.error('Text download error:', err);
       alert('Failed to download text file.');
     }
-  };
-
-  const speakText = (text) => {
-    if (!window.speechSynthesis || !text) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(String(text).slice(0, MAX_VOICE_SPEAK_CHARS));
-    utterance.rate = 0.98;
-    utterance.pitch = 1.02;
-    utterance.lang = language === 'hindi' ? 'hi-IN' : 'en-IN';
-    window.speechSynthesis.speak(utterance);
   };
 
   const startVoiceChat = () => {
@@ -373,25 +422,34 @@ export default function EducoAssist() {
         return;
       }
 
+      const isPlanRequest = /(study\s*plan|\bplan\b|roadmap|day\s*\d+)/i.test(question);
+      const requestedDays = getRequestedDays(question, 5);
+
       setPrompt(question);
-      setMode('chat');
+      setMode(isPlanRequest ? 'plan' : 'chat');
       setLoading(true);
 
-      askEducoAssist(question, {
-        mode: 'chat',
+      const voicePrompt = isPlanRequest
+        ? `${question}\n\nOutput rules: return plain text only, no markdown symbols (#, ##, ###, *, **, -). You must include exactly Day 1 to Day ${requestedDays} with short concise lines and no missing day. Keep total output up to 25 lines.`
+        : question;
+
+      askEducoAssist(voicePrompt, {
+        mode: isPlanRequest ? 'plan' : 'chat',
         subject,
         level,
         outputLanguage: language,
         responseStyle: 'structured',
         includeExamples: true,
-        shortResponse: true,
+        shortResponse: false,
       })
         .then((result) => {
-          const reply = normalizeAnswerLength(result.answer || 'No answer generated.', 900);
+          const rawReply = result.answer || 'No answer generated.';
+          const reply = isPlanRequest
+            ? normalizeAnswerLength(enforcePlanDayCoverage(rawReply, requestedDays, 25), MAX_RENDER_CHARS_PLAN)
+            : normalizeAnswerLength(rawReply, MAX_RENDER_CHARS_CHAT);
           setAnswer(reply);
           setVoiceReply(reply);
           setVoiceStatus('Answer ready');
-          speakText(reply);
         })
         .catch((err) => {
           const message = err?.message || 'Unable to get voice response right now.';
@@ -418,7 +476,12 @@ export default function EducoAssist() {
     setLoading(true);
     setError('');
     try {
-      const result = await askEducoAssist(question, {
+      const requestedDays = mode === 'plan' ? getRequestedDays(question, 5) : 5;
+      const finalPrompt = mode === 'plan'
+        ? `${question}\n\nOutput rules: return plain text only, no markdown symbols (#, ##, ###, *, **, -). You must include exactly Day 1 to Day ${requestedDays} with short concise lines and no missing day. Keep total output up to 25 lines.`
+        : question;
+
+      const result = await askEducoAssist(finalPrompt, {
         mode,
         subject,
         level,
@@ -426,7 +489,13 @@ export default function EducoAssist() {
         responseStyle: 'structured',
         includeExamples: true,
       });
-      setAnswer(result.answer || 'No answer generated.');
+      const rawAnswer = result.answer || 'No answer generated.';
+      if (mode === 'plan') {
+        const planResponse = enforcePlanDayCoverage(rawAnswer, requestedDays, 25);
+        setAnswer(normalizeAnswerLength(planResponse, MAX_RENDER_CHARS_PLAN));
+      } else {
+        setAnswer(normalizeAnswerLength(rawAnswer, MAX_RENDER_CHARS_CHAT));
+      }
     } catch (err) {
       setError(err?.message || 'Unable to get response from Grok.');
     } finally {
@@ -676,7 +745,7 @@ export default function EducoAssist() {
             <div className="voice-chat-header">
               <div>
                 <h3>Voice Chat AI</h3>
-                <p>Talk to your AI tutor with live speech input and spoken replies.</p>
+                <p>Talk to your AI tutor with live speech input and text replies.</p>
               </div>
               <button className="btn-secondary" onClick={() => setVoiceChatOpen(false)}>Close</button>
             </div>
@@ -703,9 +772,6 @@ export default function EducoAssist() {
             <div className="voice-chat-actions">
               <button className="btn-primary" onClick={toggleVoiceListening} disabled={loading}>
                 <IoMicOutline /> {voiceListening ? 'Listening...' : 'Speak Now'}
-              </button>
-              <button className="btn-secondary" onClick={() => speakText(voiceReply || answer)} disabled={!voiceReply && !answer}>
-                Read Answer Aloud
               </button>
               <button className="btn-secondary" onClick={() => { setVoiceTranscript(''); setVoiceReply(''); setVoiceError(''); setVoiceStatus('Ready to listen'); }}>
                 Clear
