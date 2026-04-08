@@ -23,6 +23,19 @@
         "focusMode": false
       },
       "updatedAt": "2026-04-01T13:24:22.159Z"
+    },
+    {
+      "id": "usr_036ef2bf-029f-4d00-9d21-bc6ecbb32545",
+      "name": "shubham",
+      "email": "shubsaurav1710@gmail.com",
+      "passwordHash": "$2a$10$crTbmS4cQRXYKlF5.DN0m.ciucXJcX.zdLWQcfBkFtbWipOzuNGfi",
+      "authProvider": "local",
+      "createdAt": "2026-04-08T16:25:00.290Z",
+      "preferences": {
+        "theme": "light",
+        "focusMode": false
+      },
+      "updatedAt": "2026-04-08T16:25:00.290Z"
     }
   ]
 }

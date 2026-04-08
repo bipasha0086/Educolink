@@ -1,0 +1,40 @@
+{
+  "resources": [
+    {
+      "id": "res_1775666341832_kj8qepk9",
+      "roomCode": "EDU5P69BL",
+      "storedName": "1775666341799-merged-1775250345918.pdf",
+      "originalName": "merged-1775250345918.pdf",
+      "size": 939340,
+      "uploadedBy": "shubham",
+      "uploadedAt": "2026-04-08T16:39:01.832Z"
+    },
+    {
+      "id": "res_1775667663511_movqdgj7",
+      "roomCode": "EDUSGEO21",
+      "storedName": "1775667663495-dl-27.jpeg",
+      "originalName": "DL-27.jpeg",
+      "size": 248756,
+      "uploadedBy": "shubham",
+      "uploadedAt": "2026-04-08T17:01:03.511Z"
+    },
+    {
+      "id": "res_1775670973854_bxdr8rwh",
+      "roomCode": "EDUS4T5GR",
+      "storedName": "1775670973788-merged-1775109276948.pdf",
+      "originalName": "merged-1775109276948.pdf",
+      "size": 6267819,
+      "uploadedBy": "shubham",
+      "uploadedAt": "2026-04-08T17:56:13.854Z"
+    },
+    {
+      "id": "res_1775672937029_c5zts2hd",
+      "roomCode": "EDUS4T5GR",
+      "storedName": "1775672937021-general-study-plan-2026-04-02-1.html",
+      "originalName": "General-study-plan-2026-04-02 (1).html",
+      "size": 2671,
+      "uploadedBy": "shubham",
+      "uploadedAt": "2026-04-08T18:28:57.029Z"
+    }
+  ]
+}
