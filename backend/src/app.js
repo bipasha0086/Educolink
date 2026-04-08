@@ -36,7 +36,11 @@ app.use(
   }),
 );
 
-app.use(express.json({ limit: '1mb' }));
+// Custom JSON parser that skips multipart/form-data (for file uploads)
+app.use(express.json({ 
+  limit: '1mb',
+  skip: (req) => req.is('multipart/form-data')
+}));
 app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
 
 app.get('/api/health', (_req, res) => {

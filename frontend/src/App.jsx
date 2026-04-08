@@ -4,6 +4,7 @@ import Home from './pages/Home';
 import EducoAssist from './pages/EducoAssist';
 import NotesHub from './pages/NotesHub';
 import StudyRoom from './pages/StudyRoom';
+import SharedWorkspace from './pages/SharedWorkspace';
 import ProductivityTools from './pages/ProductivityTools';
 import VisualLabs from './pages/VisualLabs';
 import SmartWorkspace from './pages/SmartWorkspace';
@@ -29,6 +30,7 @@ function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/workspace/shared/:roomCode" element={<SharedWorkspace />} />
         <Route
           path="*"
           element={

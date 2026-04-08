@@ -7,6 +7,30 @@
   margin: 0 auto;
 }
 
+.study-room-page {
+  position: relative;
+  isolation: isolate;
+  overflow: visible;
+  border-radius: 0;
+}
+
+.study-room-page .studyroom-global-bg {
+  position: absolute;
+  inset: -120px -2400px -1200px -2400px;
+  z-index: -3;
+  pointer-events: none;
+  background:
+    radial-gradient(1200px 480px at 85% 10%, rgba(188, 170, 255, 0.34), transparent 62%),
+    radial-gradient(900px 420px at 12% 18%, rgba(255, 214, 236, 0.28), transparent 64%),
+    radial-gradient(1100px 520px at 50% 100%, rgba(172, 208, 255, 0.24), transparent 60%),
+    linear-gradient(145deg, #f7ecdf 0%, #ede7ff 44%, #e8eeff 100%);
+}
+
+.study-room-page > *:not(.studyroom-global-bg) {
+  position: relative;
+  z-index: 1;
+}
+
 /* Hero Section */
 .module-hero {
   background: linear-gradient(135deg, var(--primary), var(--primary-container));

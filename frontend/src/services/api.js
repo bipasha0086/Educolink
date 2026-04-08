@@ -57,6 +57,133 @@ export async function uploadFile(file) {
   return data?.file;
 }
 
+export function normalizeRoomCode(roomCode) {
+  return String(roomCode || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 12);
+}
+
+export async function listRoomResources(roomCode) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) {
+    throw new Error('Enter a valid room code.');
+  }
+
+  const data = await requestJson(`/api/rooms/${encodeURIComponent(normalized)}/resources`);
+  return {
+    roomCode: data?.roomCode || normalized,
+    resources: Array.isArray(data?.resources) ? data.resources : [],
+  };
+}
+
+export async function uploadRoomResource(roomCode, file, uploadedBy = 'Anonymous') {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) {
+    throw new Error('Enter a valid room code.');
+  }
+
+  if (!(file instanceof File)) {
+    throw new Error('Please select a valid file.');
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('uploadedBy', String(uploadedBy || 'Anonymous'));
+
+  const response = await fetch(`${API_BASE_URL}/api/rooms/${encodeURIComponent(normalized)}/resources/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(data?.message || 'Upload failed.');
+  }
+
+  return data?.resource || null;
+}
+
+export async function joinStudyRoom(roomCode, displayName, memberId = '') {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) {
+    throw new Error('Enter a valid room code.');
+  }
+
+  const data = await requestJson(`/api/rooms/${encodeURIComponent(normalized)}/join`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      displayName: String(displayName || 'Anonymous').trim(),
+      memberId: String(memberId || '').trim(),
+    }),
+  });
+
+  return {
+    roomCode: data?.roomCode || normalized,
+    member: data?.member || null,
+    participants: Array.isArray(data?.participants) ? data.participants : [],
+  };
+}
+
+export async function getStudyRoomSession(roomCode) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) {
+    throw new Error('Enter a valid room code.');
+  }
+
+  const data = await requestJson(`/api/rooms/${encodeURIComponent(normalized)}/session`);
+  return {
+    roomCode: data?.roomCode || normalized,
+    participants: Array.isArray(data?.participants) ? data.participants : [],
+    messages: Array.isArray(data?.messages) ? data.messages : [],
+  };
+}
+
+export async function sendStudyRoomMessage(roomCode, memberId, text) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized) {
+    throw new Error('Enter a valid room code.');
+  }
+
+  const data = await requestJson(`/api/rooms/${encodeURIComponent(normalized)}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      memberId: String(memberId || '').trim(),
+      text: String(text || '').trim(),
+    }),
+  });
+
+  return data?.message || null;
+}
+
+export async function sendStudyRoomHeartbeat(roomCode, memberId) {
+  const normalized = normalizeRoomCode(roomCode);
+  if (!normalized || !String(memberId || '').trim()) {
+    return;
+  }
+
+  await requestJson(`/api/rooms/${encodeURIComponent(normalized)}/heartbeat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ memberId: String(memberId).trim() }),
+  });
+}
+
 export async function askEducoAssist(prompt, options = 'chat') {
   const payload = typeof options === 'string' ? { mode: options } : { ...(options || {}) };
 
